@@ -7,6 +7,7 @@ import 'package:platform_absensi_digital/pages/main_page.dart';
 import 'package:platform_absensi_digital/pages/forgot_password_page.dart';
 import 'package:platform_absensi_digital/pages/login_guru_page.dart';
 import 'package:platform_absensi_digital/services/api_service.dart';
+import 'package:platform_absensi_digital/services/firebase_messaging_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -16,10 +17,10 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  // Labelnya disesuaikan karena kita bisa menerima email atau username
-  final TextEditingController _identifierController = TextEditingController(); 
+  final TextEditingController _identifierController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  bool _isLoading = false; // [BARU] Tambahan untuk UX Loading
+  bool _isLoading = false;
+  bool _obscurePassword = true;
 
   @override
   void dispose() {
@@ -77,8 +78,22 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   TextField(
                     controller: _passwordController,
-                    obscureText: true,
-                    decoration: InputDecoration(filled: true, fillColor: Colors.white, border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none), hintText: "••••••••", prefixIcon: const Icon(Icons.lock_outline_rounded, color: Colors.grey)),
+                    obscureText: _obscurePassword,
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
+                      hintText: "••••••••",
+                      prefixIcon: const Icon(Icons.lock_outline_rounded, color: Colors.grey),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _obscurePassword ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                          color: Colors.grey,
+                          size: 20,
+                        ),
+                        onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 40),
                   SizedBox(
@@ -104,6 +119,11 @@ class _LoginPageState extends State<LoginPage> {
                           // 1. SIMPAN DATA PROFIL KE PROVIDER
                           final userProvider = Provider.of<UserProvider>(context, listen: false);
                           userProvider.setUserData(idUser, namaLengkap, infoKelas, roleUser);
+
+                          // Update FCM Token ke Server
+                          if (response['token'] != null) {
+                            FirebaseMessagingService.updateFCMTokenToServer(idUser, response['token']);
+                          }
 
                           // [BARU] 1.5 SIMPAN DATA GEOFENCE KE PROVIDER
                           // [DIUBAH] Sekarang menyimpan data poligon, bukan radius.
@@ -134,6 +154,7 @@ class _LoginPageState extends State<LoginPage> {
                               dashData['persentaseKehadiran'] ?? 0,
                               dashData['riwayatAbsensi'] ?? [],
                               dashData['riwayatPerizinan'] ?? [],
+                              jadwal: dashData['jadwalAktif'] ?? [],
                             );
                           }
 

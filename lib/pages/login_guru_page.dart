@@ -15,6 +15,7 @@ class LoginGuruPage extends StatefulWidget {
 class _LoginGuruPageState extends State<LoginGuruPage> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  bool _obscurePassword = true;
 
   @override
   void dispose() {
@@ -69,8 +70,22 @@ class _LoginGuruPageState extends State<LoginGuruPage> {
                   const SizedBox(height: 10),
                   TextField(
                     controller: _passwordController,
-                    obscureText: true, 
-                    decoration: InputDecoration(filled: true, fillColor: Colors.white, border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none), hintText: "••••••••", prefixIcon: const Icon(Icons.lock_outline_rounded, color: Colors.grey)),
+                    obscureText: _obscurePassword,
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
+                      hintText: "••••••••",
+                      prefixIcon: const Icon(Icons.lock_outline_rounded, color: Colors.grey),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _obscurePassword ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                          color: Colors.grey,
+                          size: 20,
+                        ),
+                        onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 40),
 
@@ -100,12 +115,13 @@ class _LoginGuruPageState extends State<LoginGuruPage> {
                             // 2. AMBIL DATA DASHBOARD KHUSUS GURU
                             var dashResponse = await ApiService.getDashboardGuru(idUser);
                             if (dashResponse['status'] == 'success') {
-                              var dashData = dashResponse['data'];
-                              Provider.of<UserProvider>(context, listen: false).setDashboardGuruData(
-                                dashData['jumlahIzinPending'],
-                                dashData['persentaseKehadiranKelas'],
-                                dashData['rekapAbsensiKelas'],
-                                dashData['jadwalMengajar']
+                              var dashData = dashResponse['data'] as Map<String, dynamic>?;
+                              // [FIX] Nama method diperbaiki & ditambahkan null-safety
+                              Provider.of<UserProvider>(context, listen: false).setGuruDashboardData(
+                                dashData?['jumlahIzinPending'] ?? 0,
+                                dashData?['persentaseKehadiranKelas'] ?? 0,
+                                dashData?['rekapAbsensiKelas'] ?? [],
+                                dashData?['jadwalMengajar'] ?? []
                               );
                             }
 

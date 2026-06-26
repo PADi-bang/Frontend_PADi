@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:convert'; // [BARU] Untuk Base64 encoding
 
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
@@ -8,20 +7,13 @@ import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
 import 'package:tflite_flutter/tflite_flutter.dart' as tfl;
 import 'package:image/image.dart' as img;
-import 'package:provider/provider.dart'; // [BARU] Import provider
+import 'package:provider/provider.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 
-// Asumsi path, sesuaikan jika berbeda
-import '../main.dart'; 
+import '../main.dart';
 import '../services/api_service.dart';
-import '../providers/user_provider.dart'; // [BARU] Import UserProvider
+import '../providers/user_provider.dart';
 
-// =======================================================================
-// [PERUBAHAN] - MEMBUAT HALAMAN ABSENSI MENJADI "LAZY"
-// =======================================================================
-
-// 1. Widget AbsensiPage yang asli sekarang menjadi "pembungkus" (wrapper).
-//    Tugasnya adalah menunda pembuatan konten kamera sampai halaman ini benar-benar terlihat.
 class AbsensiPage extends StatefulWidget {
   final int siswaId;
   const AbsensiPage({super.key, required this.siswaId});
@@ -30,36 +22,18 @@ class AbsensiPage extends StatefulWidget {
   State<AbsensiPage> createState() => _AbsensiPageState();
 }
 
-class _AbsensiPageState extends State<AbsensiPage> with AutomaticKeepAliveClientMixin {
-  // [PERBAIKAN] Gunakan Future yang resolve setelah frame pertama untuk lazy loading.
-  // Ini adalah pola yang lebih stabil daripada setState di addPostFrameCallback.
-  final Future<void> _contentLoader = Future.delayed(Duration.zero);
-
+class _AbsensiPageState extends State<AbsensiPage>
+    with AutomaticKeepAliveClientMixin {
   @override
-  bool get wantKeepAlive => true; // Ini penting untuk menjaga state saat berpindah tab.
+  bool get wantKeepAlive => true;
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); // Wajib dipanggil saat menggunakan AutomaticKeepAliveClientMixin.
-
-    return FutureBuilder<void>(
-      future: _contentLoader,
-      builder: (context, snapshot) {
-        // Jika future sudah selesai (setelah frame pertama), bangun konten utama.
-        if (snapshot.connectionState == ConnectionState.done) {
-          return _AbsensiPageContent(siswaId: widget.siswaId);
-        }
-        // Selama future belum selesai, tampilkan loading indicator.
-        return const Scaffold(
-          backgroundColor: Color(0xFFFAFAFA),
-          body: Center(child: CircularProgressIndicator(color: Color(0xFF006D5B))),
-        );
-      },
-    );
+    super.build(context);
+    return _AbsensiPageContent(siswaId: widget.siswaId);
   }
 }
 
-// 2. Logika dan UI AbsensiPage yang asli dipindahkan ke dalam widget dan state baru ini.
 class _AbsensiPageContent extends StatefulWidget {
   final int siswaId;
   const _AbsensiPageContent({required this.siswaId});
@@ -68,41 +42,60 @@ class _AbsensiPageContent extends StatefulWidget {
   State<_AbsensiPageContent> createState() => _AbsensiPageContentState();
 }
 
-class _AbsensiPageContentState extends State<_AbsensiPageContent> {
+class _AbsensiPageContentState extends State<_AbsensiPageContent>
+    with WidgetsBindingObserver {
   CameraController? _controller;
   Future<void>? _initializeControllerFuture;
 
-  // State untuk Geofencing & Logika
   bool _isWithinRadius = false;
   String _locationMessage = "Mencari lokasi Anda...";
   Position? _currentPosition;
   StreamSubscription<Position>? _locationSubscription;
 
-  // State untuk Kamera & AI
   late tfl.Interpreter _interpreter;
   bool _isProcessing = false;
   String? _cameraError;
 
-  // [DIUBAH] State sekarang menyimpan poligon, bukan titik pusat dan radius.
   late List<Map<String, double>> _schoolPolygon;
+  bool _hasCheckedIn = false;
 
   @override
   void initState() {
     super.initState();
-    
-    // [DIUBAH] Menarik data poligon dari UserProvider.
+    WidgetsBinding.instance.addObserver(this);
     final userProvider = context.read<UserProvider>();
-    
-    // Fallback ke poligon kosong jika data dari provider tidak ada.
     _schoolPolygon = userProvider.schoolPolygon ?? [];
-    
-    // [DEBUGGING] Tambahkan print ini untuk memastikan data poligon ter-load.
-    // Jika outputnya "0 vertices", berarti data tidak masuk dari halaman login.
-    debugPrint("AbsensiPage: Memuat poligon sekolah dengan ${_schoolPolygon.length} vertices.");
-
+    _evaluasiStatusPresensiAwal(userProvider);
+    debugPrint(
+        "AbsensiPage: Memuat poligon sekolah dengan ${_schoolPolygon.length} vertices.");
     _initializeCamera();
     _loadModel();
     _startLocationCheck();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      debugPrint("App resumed. Re-checking location permissions and status.");
+      _locationSubscription?.cancel();
+      _startLocationCheck();
+    }
+  }
+
+  void _evaluasiStatusPresensiAwal(UserProvider userProvider) {
+    final riwayat = userProvider.riwayatAbsensi;
+    if (riwayat.isNotEmpty) {
+      final String formatHariIni =
+          DateFormat('yyyy-MM-dd').format(DateTime.now());
+      final bool sudahMasuk = riwayat.any((absen) =>
+          absen['tanggal'] == formatHariIni &&
+          absen['jam_masuk'] != null &&
+          absen['jam_pulang'] == null);
+      setState(() {
+        _hasCheckedIn = sudahMasuk;
+      });
+    }
   }
 
   Future<void> _initializeCamera() async {
@@ -110,27 +103,19 @@ class _AbsensiPageContentState extends State<_AbsensiPageContent> {
       if (cameras.isEmpty) {
         throw Exception('Tidak ada kamera yang ditemukan di perangkat ini.');
       }
-
-      // Menggunakan variabel global 'cameras' dari main.dart
       final frontCamera = cameras.firstWhere(
         (camera) => camera.lensDirection == CameraLensDirection.front,
         orElse: () => cameras.first,
       );
-
       _controller = CameraController(
         frontCamera,
         ResolutionPreset.medium,
         enableAudio: false,
       );
-
       _initializeControllerFuture = _controller!.initialize();
-      if (mounted) {
-        setState(() {});
-      }
+      if (mounted) setState(() {});
     } catch (e) {
-      if (mounted) {
-        setState(() => _cameraError = e.toString());
-      }
+      if (mounted) setState(() => _cameraError = e.toString());
       debugPrint("Gagal memuat kamera: $e");
     }
   }
@@ -139,68 +124,72 @@ class _AbsensiPageContentState extends State<_AbsensiPageContent> {
   void dispose() {
     _controller?.dispose();
     _interpreter.close();
+    WidgetsBinding.instance.removeObserver(this);
     _locationSubscription?.cancel();
     super.dispose();
   }
 
-  // --- TAHAP 1: GEOLOCATION & GEOFENCING ---
   Future<void> _startLocationCheck() async {
-    // 1. Cek dan minta izin lokasi terlebih dahulu
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
-
-    // Handle berbagai status penolakan izin
     if (permission == LocationPermission.denied) {
       if (!mounted) return;
       setState(() => _locationMessage = "Izin lokasi ditolak.");
       return;
     }
-
     if (permission == LocationPermission.deniedForever) {
       if (!mounted) return;
       setState(() => _locationMessage = "Izin lokasi ditolak permanen.");
       _showPermissionDeniedDialog();
       return;
     }
-
-    // 2. Dapatkan lokasi awal dengan cepat untuk feedback instan
     try {
       Position initialPosition = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 10), // Batas waktu agar tidak menunggu selamanya
+        timeLimit: const Duration(seconds: 10),
       );
       if (mounted) _updateLocationStatus(initialPosition);
     } catch (e) {
       debugPrint("Error mendapatkan lokasi awal: $e");
-      if (mounted) setState(() => _locationMessage = "Gagal mendapat lokasi awal. Pastikan GPS aktif.");
+      if (mounted) {
+        setState(() =>
+            _locationMessage = "Gagal mendapat lokasi awal. Pastikan GPS aktif.");
+      }
     }
-
-    // 3. Lanjutkan dengan stream untuk update real-time
     _locationSubscription = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 10) // Update tiap 10 meter
+      locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high, distanceFilter: 10),
     ).listen((Position position) {
       if (mounted) _updateLocationStatus(position);
     });
   }
 
-  // Fungsi baru untuk menampilkan dialog notifikasi
   void _showPermissionDeniedDialog() {
     showDialog(
       context: context,
       builder: (BuildContext context) => AlertDialog(
-        title: const Text("Izin Lokasi Diperlukan"),
-        content: const Text("Aplikasi ini membutuhkan izin lokasi untuk fitur absensi. Silakan aktifkan izin lokasi di pengaturan aplikasi."),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text("Izin Lokasi Diperlukan",
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        content: const Text(
+            "Aplikasi ini membutuhkan izin lokasi untuk fitur absensi. Silakan aktifkan izin lokasi di pengaturan aplikasi."),
         actions: <Widget>[
           TextButton(
-            child: const Text("Batal"),
+            child: const Text("Batal", style: TextStyle(color: Colors.grey)),
             onPressed: () => Navigator.of(context).pop(),
           ),
-          TextButton(
-            child: const Text("Buka Pengaturan"),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF006D5B),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text("Buka Pengaturan",
+                style: TextStyle(color: Colors.white)),
             onPressed: () {
-              // Buka pengaturan aplikasi untuk perangkat ini
               Geolocator.openAppSettings();
               Navigator.of(context).pop();
             },
@@ -210,11 +199,8 @@ class _AbsensiPageContentState extends State<_AbsensiPageContent> {
     );
   }
 
-  // Fungsi baru untuk memproses update lokasi & UI (menghindari duplikasi)
   void _updateLocationStatus(Position position) {
-    // [DIUBAH] Logika pengecekan diubah dari menghitung jarak menjadi pengecekan di dalam poligon.
     final isInside = _isPointInPolygon(position, _schoolPolygon);
-
     if (!mounted) return;
     setState(() {
       _currentPosition = position;
@@ -228,37 +214,35 @@ class _AbsensiPageContentState extends State<_AbsensiPageContent> {
     });
   }
 
-  // [BARU] Algoritma Ray-Casting untuk mengecek apakah sebuah titik berada di dalam poligon.
-  // Ini adalah pengganti Geolocator.distanceBetween.
-  // [PERBAIKAN] Logika dibuat lebih eksplisit untuk menghindari kebingungan lat/lon.
-  bool _isPointInPolygon(Position point, List<Map<String, double>> polygon) {
+  bool _isPointInPolygon(
+      Position point, List<Map<String, double>> polygon) {
     if (polygon.isEmpty) {
       debugPrint("Pengecekan gagal: Poligon area sekolah kosong.");
       return false;
     }
-
-    double pointLon = point.longitude; // Anggap Longitude sebagai sumbu X
-    double pointLat = point.latitude;  // Anggap Latitude sebagai sumbu Y
+    double pointLon = point.longitude;
+    double pointLat = point.latitude;
     bool isInside = false;
-    
     for (int i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-      double vertexLonI = polygon[i]['longitude']!; // X1
-      double vertexLatI = polygon[i]['latitude']!;  // Y1
-      double vertexLonJ = polygon[j]['longitude']!; // X2
-      double vertexLatJ = polygon[j]['latitude']!;  // Y2
-
-      bool intersect = ((vertexLatI > pointLat) != (vertexLatJ > pointLat)) && (pointLon < (vertexLonJ - vertexLonI) * (pointLat - vertexLatI) / (vertexLatJ - vertexLatI) + vertexLonI);
-      if (intersect) {
-        isInside = !isInside;
-      }
+      double vertexLonI = polygon[i]['longitude']!;
+      double vertexLatI = polygon[i]['latitude']!;
+      double vertexLonJ = polygon[j]['longitude']!;
+      double vertexLatJ = polygon[j]['latitude']!;
+      bool intersect = ((vertexLatI > pointLat) != (vertexLatJ > pointLat)) &&
+          (pointLon <
+              (vertexLonJ - vertexLonI) *
+                      (pointLat - vertexLatI) /
+                      (vertexLatJ - vertexLatI) +
+                  vertexLonI);
+      if (intersect) isInside = !isInside;
     }
     return isInside;
   }
 
-  // --- TAHAP 2: FACE EMBEDDING ---
   Future<void> _loadModel() async {
     try {
-      _interpreter = await tfl.Interpreter.fromAsset('assets/mobilefacenet.tflite');
+      _interpreter =
+          await tfl.Interpreter.fromAsset('assets/mobilefacenet.tflite');
     } catch (e) {
       debugPrint("Gagal memuat model TFLite: $e");
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -269,105 +253,75 @@ class _AbsensiPageContentState extends State<_AbsensiPageContent> {
   }
 
   Future<List<double>?> _runModelOnImage(File imageFile) async {
-    // 1. INISIALISASI PENDETEKSI WAJAH GOOGLE ML KIT
     final options = FaceDetectorOptions(performanceMode: FaceDetectorMode.fast);
     final faceDetector = FaceDetector(options: options);
     final inputImage = InputImage.fromFilePath(imageFile.path);
-
-    // 2. MENCARI LOKASI WAJAH DI DALAM FOTO
     final List<Face> faces = await faceDetector.processImage(inputImage);
-    faceDetector.close(); // Tutup detector untuk menghemat memori HP
-
-    // Jika tidak ada wajah manusia di depan kamera, hentikan proses
+    faceDetector.close();
     if (faces.isEmpty) {
-      throw Exception("Wajah tidak ditemukan. Pastikan wajah terlihat jelas di kamera.");
+      throw Exception(
+          "Wajah tidak ditemukan. Pastikan wajah terlihat jelas di kamera.");
     }
-
-    // Ambil koordinat wajah pertama/terbesar yang terdeteksi
     final Face firstFace = faces.first;
     final Rect boundingBox = firstFace.boundingBox;
-
-    // 3. MUAT GAMBAR ASLI UNTUK DIPOTONG
     img.Image? rawImage = img.decodeImage(await imageFile.readAsBytes());
     if (rawImage == null) return null;
-    
-    // [TAMBAHKAN INI] Memaksa gambar tegak sesuai rotasi EXIF-nya
     img.Image originalImage = img.bakeOrientation(rawImage);
-
-    // 4. POTONG (CROP) GAMBAR TEPAT DI KOTAK WAJAH
-    // Mencegah error jika kotak wajah sedikit keluar dari batas layar
     int x = boundingBox.left.toInt().clamp(0, originalImage.width);
     int y = boundingBox.top.toInt().clamp(0, originalImage.height);
     int w = boundingBox.width.toInt().clamp(0, originalImage.width - x);
     int h = boundingBox.height.toInt().clamp(0, originalImage.height - y);
-
-    // Menggunting gambar agar hanya tersisa bagian wajah (latar belakang dibuang)
-    img.Image croppedFace = img.copyCrop(originalImage, x: x, y: y, width: w, height: h);
-
-    // 5. UBAH UKURAN WAJAH YANG SUDAH DIPOTONG MENJADI 112x112
-    img.Image resizedImage = img.copyResize(croppedFace, width: 112, height: 112);
-
-    // 6. EKSTRAKSI FITUR MENGGUNAKAN TFLITE (MobileFaceNet)
+    img.Image croppedFace =
+        img.copyCrop(originalImage, x: x, y: y, width: w, height: h);
+    img.Image resizedImage =
+        img.copyResize(croppedFace, width: 112, height: 112);
     var input = List.generate(112, (y) {
       return List.generate(112, (x) {
         final pixel = resizedImage.getPixel(x, y);
-        return [(pixel.r - 127.5) / 127.5, (pixel.g - 127.5) / 127.5, (pixel.b - 127.5) / 127.5];
+        return [
+          (pixel.r - 127.5) / 127.5,
+          (pixel.g - 127.5) / 127.5,
+          (pixel.b - 127.5) / 127.5
+        ];
       });
     });
-
     var reshapedInput = [input];
     var output = List.filled(1 * 192, 0.0).reshape([1, 192]);
-
     _interpreter.run(reshapedInput, output);
     return List<double>.from(output[0]);
   }
 
-  // --- TAHAP 3: VALIDASI & PENYIMPANAN ---
-  // [DIUBAH] Nama fungsi diubah agar lebih spesifik
   Future<void> _onAbsenMasukButtonPressed() async {
-    if (_controller == null || !_controller!.value.isInitialized || _isProcessing || _currentPosition == null) return;
-
+    if (_controller == null ||
+        !_controller!.value.isInitialized ||
+        _isProcessing ||
+        _currentPosition == null) return;
     setState(() => _isProcessing = true);
-
     try {
       final XFile imageFile = await _controller!.takePicture();
-
-      // [OPTIMASI] Kompres gambar sebelum dikirim ke server
-      img.Image? originalImage = img.decodeImage(await imageFile.readAsBytes());
-      if (originalImage == null) {
-        throw Exception("Gagal memproses gambar yang diambil.");
-      }
-      // Ubah ukuran gambar agar tidak terlalu besar (misal lebar 800px)
-      img.Image resizedImage = img.copyResize(originalImage, width: 800);
-      // Encode ke format JPG dengan kualitas 85%
-      final imageBytes = img.encodeJpg(resizedImage, quality: 85);
-      final String base64Image = base64Encode(imageBytes);
-
       final faceEmbedding = await _runModelOnImage(File(imageFile.path));
-
       if (faceEmbedding == null) {
         throw Exception("Wajah tidak terdeteksi pada gambar.");
       }
-
-      // Menggunakan ApiService yang sudah ada
       final result = await ApiService.kirimAbsensiMasuk(
-        userId: widget.siswaId, // Akses siswaId dari state widget baru
+        userId: widget.siswaId,
         faceEmbedding: faceEmbedding,
         latitude: _currentPosition!.latitude,
         longitude: _currentPosition!.longitude,
-        fotoMasuk: base64Image, // [BARU] Kirim gambar dalam format Base64
+        fotoMasukPath: imageFile.path,
       );
-
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(result['message'] ?? 'Terjadi kesalahan.'),
-        backgroundColor: (result['success'] ?? false) ? Colors.green : Colors.red,
+        backgroundColor: (result['success'] ?? false)
+            ? const Color(0xFF006D5B)
+            : Colors.red,
+        behavior: SnackBarBehavior.floating,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ));
-
       if (result['success'] == true) {
-        // [BARU] Panggil provider untuk refresh data dashboard setelah absen berhasil.
-        // Ini akan membuat halaman riwayat otomatis terupdate.
+        setState(() => _hasCheckedIn = true);
         final user = context.read<UserProvider>();
         final dashRes = await ApiService.getDashboardData(user.userId);
         if (dashRes['status'] == 'success') {
@@ -376,66 +330,55 @@ class _AbsensiPageContentState extends State<_AbsensiPageContent> {
             dashRes['data']['persentaseKehadiran'],
             dashRes['data']['riwayatAbsensi'],
             dashRes['data']['riwayatPerizinan'],
+            jadwal: dashRes['data']['jadwalAktif'] ?? [],
           );
         }
       }
-
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text("Error: ${e.toString()}"),
         backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ));
     } finally {
-      if (mounted) {
-        setState(() => _isProcessing = false);
-      }
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
-  // [BARU] Fungsi untuk menangani tombol Absen Pulang
   Future<void> _onAbsenPulangButtonPressed() async {
-    if (_controller == null || !_controller!.value.isInitialized || _isProcessing || _currentPosition == null) return;
-
+    if (_controller == null ||
+        !_controller!.value.isInitialized ||
+        _isProcessing ||
+        _currentPosition == null) return;
     setState(() => _isProcessing = true);
-
     try {
       final XFile imageFile = await _controller!.takePicture();
-      
-      // [OPTIMASI] Kompres gambar sebelum dikirim ke server (sama seperti absen masuk)
-      img.Image? originalImage = img.decodeImage(await imageFile.readAsBytes());
-      if (originalImage == null) {
-        throw Exception("Gagal memproses gambar yang diambil.");
-      }
-      img.Image resizedImage = img.copyResize(originalImage, width: 800);
-      final imageBytes = img.encodeJpg(resizedImage, quality: 85);
-      final String base64Image = base64Encode(imageBytes);
-
       final faceEmbedding = await _runModelOnImage(File(imageFile.path));
-
       if (faceEmbedding == null) {
         throw Exception("Wajah tidak terdeteksi pada gambar.");
       }
-
-      // Panggil service untuk absen pulang
       final result = await ApiService.kirimAbsensiPulang(
         userId: widget.siswaId,
         faceEmbedding: faceEmbedding,
         latitude: _currentPosition!.latitude,
         longitude: _currentPosition!.longitude,
-        fotoPulang: base64Image,
+        fotoPulangPath: imageFile.path,
       );
-
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(result['message'] ?? 'Terjadi kesalahan.'),
-        backgroundColor: (result['success'] ?? false) ? Colors.green : Colors.red,
+        backgroundColor: (result['success'] ?? false)
+            ? const Color(0xFF006D5B)
+            : Colors.red,
+        behavior: SnackBarBehavior.floating,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ));
-
       if (result['success'] == true) {
-        // [BARU] Panggil provider untuk refresh data dashboard setelah absen berhasil.
-        // Ini akan membuat halaman riwayat otomatis terupdate.
+        setState(() => _hasCheckedIn = false);
         final user = context.read<UserProvider>();
         final dashRes = await ApiService.getDashboardData(user.userId);
         if (dashRes['status'] == 'success') {
@@ -444,259 +387,464 @@ class _AbsensiPageContentState extends State<_AbsensiPageContent> {
             dashRes['data']['persentaseKehadiran'],
             dashRes['data']['riwayatAbsensi'],
             dashRes['data']['riwayatPerizinan'],
+            jadwal: dashRes['data']['jadwalAktif'] ?? [],
           );
         }
       }
-
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text("Error: ${e.toString()}"),
         backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ));
     } finally {
-      if (mounted) {
-        setState(() => _isProcessing = false);
-      }
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // [BARU] Ambil nama sekolah dari provider jika ada untuk ditampilkan di UI
     final String infoKelas = context.read<UserProvider>().kelasAtauNip;
     final List<String> infoParts = infoKelas.split(' • ');
-    final String namaSekolah = infoParts.length > 1 ? infoParts[1] : "Area Presensi Sekolah";
+    final String namaSekolah =
+        infoParts.length > 1 ? infoParts[1] : "Area Presensi Sekolah";
+
+    // Status warna & label berdasarkan state
+    final Color btnColor = _isWithinRadius
+        ? (_hasCheckedIn ? const Color(0xFF1C2B2A) : const Color(0xFF006D5B))
+        : Colors.grey.shade400;
+    final String btnLabel = _hasCheckedIn ? "Absen Pulang" : "Absen Masuk";
+    final IconData btnIcon = _hasCheckedIn ? Icons.logout_rounded : Icons.login_rounded;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFAFAFA),
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        automaticallyImplyLeading: false,
-        title: const Text("Presensi", style: TextStyle(color: Color(0xFF1E1E1E), fontWeight: FontWeight.bold, fontSize: 24)),
-        centerTitle: false,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              DateFormat('EEEE, dd MMMM yyyy', 'id_ID').format(DateTime.now()),
-              style: const TextStyle(color: Colors.grey, fontSize: 14, fontWeight: FontWeight.w500),
-            ),
-            const SizedBox(height: 25),
-
-            // 1. Tampilan Kamera (Face Recognition)
-            Container(
-              height: 320, // Sedikit dikurangi agar ada ruang untuk kartu lokasi
-              width: double.infinity,
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                color: const Color(0xFFE8F3F1),
-                borderRadius: BorderRadius.circular(32),
-                border: Border.all(color: Colors.white, width: 4),
-                boxShadow: [
-                  BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 20, offset: const Offset(0, 10))
-                ],
-              ),
-              child: FutureBuilder<void>(
-                future: _initializeControllerFuture,
-                builder: (context, snapshot) {
-                  // Jika ada error saat inisialisasi kamera
-                  if (_cameraError != null) {
-                    return Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Text(
-                          'Gagal memuat kamera:\n$_cameraError',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    );
-                  }
-                  // Jika kamera berhasil diinisialisasi
-                  if (snapshot.connectionState == ConnectionState.done) {
-                    return Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        FittedBox(
-                          fit: BoxFit.cover,
-                          child: SizedBox(
-                            width: _controller!.value.previewSize?.height ?? 1,
-                            height: _controller!.value.previewSize?.width ?? 1,
-                            child: CameraPreview(_controller!),
-                          ),
-                        ),
-                        // Frame Lingkaran Pemindai Wajah
-                        Center(
-                          child: Container(
-                            width: 220,
-                            height: 220,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white.withOpacity(0.6), width: 2.5),
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  } else {
-                    // Tampilan saat kamera sedang loading
-                    return const Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        CircularProgressIndicator(color: Color(0xFF006D5B)),
-                        SizedBox(height: 15),
-                        Text("Membuka Kamera...", style: TextStyle(color: Color(0xFF006D5B), fontWeight: FontWeight.bold)),
-                      ],
-                    );
-                  }
-                },
-              ),
-            ),
-            const SizedBox(height: 25),
-
-            // 2. KARTU STATUS GEOFENCING (BARU)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: Colors.grey.withOpacity(0.1)),
-                boxShadow: [
-                  BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 15, offset: const Offset(0, 5))
-                ],
-              ),
-              child: Row(
-                children: [
-                  // Ikon Lokasi Beranimasi/Menyala
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: _isWithinRadius ? const Color(0xFFE8F3F1) : const Color(0xFFFFF0F0),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Icon(Icons.location_on_rounded, color: _isWithinRadius ? const Color(0xFF006D5B) : Colors.red, size: 28),
-                  ),
-
-                  const SizedBox(width: 15),
-                  // Informasi Lokasi
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Text(_locationMessage, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: _isWithinRadius ? const Color(0xFF006D5B) : Colors.red)),
-                            if (_isWithinRadius) ...[
-                              const SizedBox(width: 5),
-                              const Icon(Icons.verified_rounded, color: Color(0xFF006D5B), size: 16),
-                            ]
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        // [UPDATE] Teks Hardcode dihapus, diganti menggunakan nama Sekolah dari provider
-                        Text(namaSekolah, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 15),
-
-            // 3. Info Jaringan (Tetap dipertahankan sebagai opsi)
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: const Color(0xFFFFF3E0), borderRadius: BorderRadius.circular(16)),
-                  child: const Icon(Icons.wifi_rounded, color: Color(0xFFEBC15B)),
+      backgroundColor: const Color(0xFFF5F7FA),
+      body: CustomScrollView(
+        slivers: [
+          // ===== HEADER =====
+          SliverToBoxAdapter(
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF006D5B), Color(0xFF004D40)],
                 ),
-                const SizedBox(width: 15),
-                const Expanded(
+                borderRadius: BorderRadius.only(
+                  bottomLeft: Radius.circular(36),
+                  bottomRight: Radius.circular(36),
+                ),
+              ),
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 28),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text("School_Main_5G", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF1E1E1E))),
-                      Text("Verified Network", style: TextStyle(color: Colors.grey, fontSize: 13)),
+                      // Title row
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                child: const Icon(
+                                    Icons.fingerprint_rounded,
+                                    color: Colors.white,
+                                    size: 22),
+                              ),
+                              const SizedBox(width: 14),
+                              const Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    "Presensi",
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 22,
+                                      letterSpacing: -0.5,
+                                    ),
+                                  ),
+                                  Text(
+                                    "Verifikasi kehadiran Anda",
+                                    style: TextStyle(
+                                        color: Colors.white70, fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          // Status indicator
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 300),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 7),
+                            decoration: BoxDecoration(
+                              color: _isWithinRadius
+                                  ? Colors.white.withOpacity(0.2)
+                                  : Colors.red.withOpacity(0.25),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: _isWithinRadius
+                                    ? Colors.white.withOpacity(0.4)
+                                    : Colors.red.withOpacity(0.4),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 7,
+                                  height: 7,
+                                  decoration: BoxDecoration(
+                                    color: _isWithinRadius
+                                        ? Colors.greenAccent
+                                        : Colors.redAccent,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  _isWithinRadius ? "Dalam Area" : "Luar Area",
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        DateFormat('EEEE, dd MMMM yyyy', 'id_ID')
+                            .format(DateTime.now()),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.7),
+                          fontSize: 13,
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey.withOpacity(0.1))),
-                  child: const Icon(Icons.autorenew_rounded, color: Color(0xFF1E1E1E)),
-                ),
-              ],
+              ),
             ),
-            const SizedBox(height: 35),
+          ),
 
-            // 4. Tombol Utama Ambil Absensi
-            // [DIUBAH] Menjadi dua tombol: Masuk dan Pulang
-            Row(
-              children: [
-                // Tombol Absen Masuk
-                Expanded(
-                  child: SizedBox(
-                    height: 65,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _isWithinRadius ? const Color(0xFF006D5B) : Colors.grey, // Warna hijau
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                        elevation: 5,
-                        shadowColor: const Color(0xFF006D5B).withOpacity(0.3),
-                      ),
-                      onPressed: (_isWithinRadius && !_isProcessing) ? _onAbsenMasukButtonPressed : null,
-                      child: _isProcessing 
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.login_rounded, color: Colors.white),
-                          SizedBox(height: 4),
-                          Text("Absen Masuk", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                    ),
+          // ===== BODY CONTENT =====
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 24, 20, 110),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate([
+                // KAMERA
+                Container(
+                  height: 320,
+                  width: double.infinity,
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1C2B2A),
+                    borderRadius: BorderRadius.circular(28),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF006D5B).withOpacity(0.2),
+                        blurRadius: 24,
+                        offset: const Offset(0, 10),
+                      )
+                    ],
+                  ),
+                  child: FutureBuilder<void>(
+                    future: _initializeControllerFuture,
+                    builder: (context, snapshot) {
+                      if (_cameraError != null) {
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.camera_alt_rounded,
+                                    size: 48,
+                                    color: Colors.white.withOpacity(0.3)),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Gagal memuat kamera:\n$_cameraError',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                      color: Colors.redAccent,
+                                      fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
+                      if (snapshot.connectionState == ConnectionState.done) {
+                        return Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            FittedBox(
+                              fit: BoxFit.cover,
+                              child: SizedBox(
+                                width: _controller!.value.previewSize?.height ?? 1,
+                                height: _controller!.value.previewSize?.width ?? 1,
+                                child: CameraPreview(_controller!),
+                              ),
+                            ),
+                            // Face guide overlay
+                            Center(
+                              child: Container(
+                                width: 200,
+                                height: 200,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: _isWithinRadius
+                                        ? const Color(0xFF00E676)
+                                        : Colors.white.withOpacity(0.5),
+                                    width: 3,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            // Corner guides
+                            _buildCornerGuide(Alignment.topLeft, 20, 20),
+                            _buildCornerGuide(Alignment.topRight, 20, 20),
+                            _buildCornerGuide(Alignment.bottomLeft, 20, 20),
+                            _buildCornerGuide(Alignment.bottomRight, 20, 20),
+                          ],
+                        );
+                      } else {
+                        return const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(color: Color(0xFF006D5B)),
+                            SizedBox(height: 15),
+                            Text("Membuka Kamera...",
+                                style: TextStyle(
+                                    color: Colors.white70,
+                                    fontWeight: FontWeight.bold)),
+                          ],
+                        );
+                      }
+                    },
                   ),
                 ),
-                const SizedBox(width: 16),
-                // Tombol Absen Pulang
-                Expanded(
-                  child: SizedBox(
-                    height: 65,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _isWithinRadius ? const Color(0xFF151B2B) : Colors.grey, // Warna gelap
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                        elevation: 5,
-                        shadowColor: const Color(0xFF151B2B).withOpacity(0.3),
-                      ),
-                      onPressed: (_isWithinRadius && !_isProcessing) ? _onAbsenPulangButtonPressed : null,
-                      child: _isProcessing 
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.logout_rounded, color: Colors.white),
-                          SizedBox(height: 4),
-                          Text("Absen Pulang", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
+                const SizedBox(height: 20),
+
+                // STATUS LOKASI
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 400),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(
+                      color: _isWithinRadius
+                          ? const Color(0xFF006D5B).withOpacity(0.2)
+                          : Colors.red.withOpacity(0.2),
+                      width: 1.5,
                     ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (_isWithinRadius
+                                ? const Color(0xFF006D5B)
+                                : Colors.red)
+                            .withOpacity(0.06),
+                        blurRadius: 16,
+                        offset: const Offset(0, 4),
+                      )
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: _isWithinRadius
+                              ? const Color(0xFFE8F5E9)
+                              : const Color(0xFFFFEBEE),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Icon(Icons.location_on_rounded,
+                            color: _isWithinRadius
+                                ? const Color(0xFF006D5B)
+                                : Colors.redAccent,
+                            size: 26),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Text(
+                                  _locationMessage,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 15,
+                                    color: _isWithinRadius
+                                        ? const Color(0xFF006D5B)
+                                        : Colors.redAccent,
+                                  ),
+                                ),
+                                if (_isWithinRadius) ...[
+                                  const SizedBox(width: 5),
+                                  const Icon(Icons.verified_rounded,
+                                      color: Color(0xFF006D5B), size: 15),
+                                ]
+                              ],
+                            ),
+                            const SizedBox(height: 3),
+                            Text(namaSekolah,
+                                style: const TextStyle(
+                                    color: Colors.grey, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
+                const SizedBox(height: 24),
+
+                // TOMBOL ABSEN
+                SizedBox(
+                  width: double.infinity,
+                  height: 68,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: btnColor,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20)),
+                      elevation: _isWithinRadius ? 6 : 0,
+                      shadowColor: const Color(0xFF006D5B).withOpacity(0.3),
+                    ),
+                    onPressed: (_isWithinRadius && !_isProcessing)
+                        ? (_hasCheckedIn
+                            ? _onAbsenPulangButtonPressed
+                            : _onAbsenMasukButtonPressed)
+                        : null,
+                    child: _isProcessing
+                        ? const SizedBox(
+                            width: 26,
+                            height: 26,
+                            child: CircularProgressIndicator(
+                                color: Colors.white, strokeWidth: 2.5),
+                          )
+                        : Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(btnIcon, color: Colors.white, size: 22),
+                              const SizedBox(width: 10),
+                              Text(
+                                btnLabel,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 17,
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+
+                if (!_isWithinRadius)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.info_outline_rounded,
+                            size: 13, color: Colors.grey.shade400),
+                        const SizedBox(width: 6),
+                        Text(
+                          "Tombol aktif saat Anda berada di area sekolah",
+                          style: TextStyle(
+                              fontSize: 12, color: Colors.grey.shade500),
+                        ),
+                      ],
+                    ),
+                  ),
+              ]),
             ),
-            const SizedBox(height: 30),
-          ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCornerGuide(
+      Alignment alignment, double width, double height) {
+    final isTop = alignment == Alignment.topLeft ||
+        alignment == Alignment.topRight;
+    final isLeft = alignment == Alignment.topLeft ||
+        alignment == Alignment.bottomLeft;
+    return Align(
+      alignment: alignment,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          isLeft ? 20 : 0,
+          isTop ? 20 : 0,
+          isLeft ? 0 : 20,
+          isTop ? 0 : 20,
+        ),
+        child: CustomPaint(
+          size: Size(width, height),
+          painter: _CornerPainter(isTop: isTop, isLeft: isLeft),
         ),
       ),
     );
   }
+}
+
+class _CornerPainter extends CustomPainter {
+  final bool isTop;
+  final bool isLeft;
+
+  _CornerPainter({required this.isTop, required this.isLeft});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white.withOpacity(0.7)
+      ..strokeWidth = 2.5
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    final path = Path();
+    if (isTop && isLeft) {
+      path.moveTo(0, size.height);
+      path.lineTo(0, 0);
+      path.lineTo(size.width, 0);
+    } else if (isTop && !isLeft) {
+      path.moveTo(0, 0);
+      path.lineTo(size.width, 0);
+      path.lineTo(size.width, size.height);
+    } else if (!isTop && isLeft) {
+      path.moveTo(0, 0);
+      path.lineTo(0, size.height);
+      path.lineTo(size.width, size.height);
+    } else {
+      path.moveTo(0, size.height);
+      path.lineTo(size.width, size.height);
+      path.lineTo(size.width, 0);
+    }
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
