@@ -8,6 +8,7 @@ import 'package:platform_absensi_digital/pages/forgot_password_page.dart';
 import 'package:platform_absensi_digital/pages/login_guru_page.dart';
 import 'package:platform_absensi_digital/services/api_service.dart';
 import 'package:platform_absensi_digital/services/firebase_messaging_service.dart';
+import 'package:platform_absensi_digital/widgets/custom_popup.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -115,10 +116,11 @@ class _LoginPageState extends State<LoginPage> {
                           String roleUser = userData['role'] ?? "Siswa";
                           String infoKelas = userData['kelas'] ?? "Siswa SMK"; 
                           int idUser = userData['id'] ?? 0;
+                          String emailUser = userData['email'] ?? "Email tidak tersedia";
 
                           // 1. SIMPAN DATA PROFIL KE PROVIDER
                           final userProvider = Provider.of<UserProvider>(context, listen: false);
-                          userProvider.setUserData(idUser, namaLengkap, infoKelas, roleUser);
+                          userProvider.setUserData(idUser, namaLengkap, infoKelas, roleUser, emailStr: emailUser);
 
                           // Update FCM Token ke Server
                           if (response['token'] != null) {
@@ -162,11 +164,11 @@ class _LoginPageState extends State<LoginPage> {
                           if (userData['role'] == 'siswa' || userData['role'] == 'Siswa') {
                             Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const MainPage()));
                           } else {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Gunakan portal login pengajar!")));
+                            CustomPopup.show(context, message: "Gunakan portal login pengajar!", type: PopupType.warning);
                             setState(() => _isLoading = false);
                           }
                         } else {
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(response['message'] ?? "Login gagal")));
+                          CustomPopup.show(context, message: response['message'] ?? "Login gagal", type: PopupType.error);
                           setState(() => _isLoading = false);
                         }
                       },

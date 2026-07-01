@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
-import 'dart:io';
+import 'package:platform_absensi_digital/services/storage_service.dart';
+import 'package:platform_absensi_digital/services/api_service.dart';
 
 // Setup background handler (harus di top level)
 @pragma('vm:entry-point')
@@ -13,6 +15,9 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 }
 
 class FirebaseMessagingService {
+  static final StreamController<RemoteMessage> _messageStreamController = StreamController.broadcast();
+  static Stream<RemoteMessage> get onMessageStream => _messageStreamController.stream;
+
   static final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
   static final FlutterLocalNotificationsPlugin _localNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
@@ -70,6 +75,7 @@ class FirebaseMessagingService {
         print('Message also contained a notification: ${message.notification}');
         _showLocalNotification(message, channel);
       }
+      _messageStreamController.add(message);
     });
 
     String? token = await _firebaseMessaging.getToken();
@@ -77,10 +83,18 @@ class FirebaseMessagingService {
     // Token akan dikirim ke server saat user login, atau bisa dikirim di sini jika login dipertahankan
     
     // Dengarkan perubahan token
-    _firebaseMessaging.onTokenRefresh.listen((newToken) {
+    _firebaseMessaging.onTokenRefresh.listen((newToken) async {
       print("FCM Token refreshed: $newToken");
-      // Kita bisa update token, tapi butuh userId dan jwtToken yang sedang aktif.
-      // Bisa disimpan di memory state.
+      try {
+        final storage = StorageService();
+        final jwtToken = await storage.getToken();
+        final userId = await storage.getUserId();
+        if (jwtToken != null && jwtToken.isNotEmpty && userId != null && userId > 0) {
+          await updateFCMTokenToServer(userId, jwtToken);
+        }
+      } catch (e) {
+        print("Error auto-updating refreshed FCM Token: $e");
+      }
     });
   }
 
@@ -115,11 +129,11 @@ class FirebaseMessagingService {
       String? fcmToken = await _firebaseMessaging.getToken();
       if (fcmToken == null) return;
 
-      // Sesuaikan URL Backend Anda (jangan lupa ganti localhost dengan IP jika pakai physical device)
-      final String baseUrl = Platform.isAndroid ? 'http://10.0.2.2:5000' : 'http://localhost:5000';
+      // [PERBAIKAN] Gunakan ApiService.baseUrl (Ngrok URL) alih-alih hardcoded localhost/10.0.2.2
+      final String baseUrl = ApiService.baseUrl;
 
       final response = await http.put(
-        Uri.parse('$baseUrl/api/auth/fcm-token'),
+        Uri.parse('$baseUrl/auth/fcm-token'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $jwtToken',

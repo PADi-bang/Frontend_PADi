@@ -4,6 +4,8 @@ import 'package:platform_absensi_digital/providers/user_provider.dart'; // Wajib
 import 'package:platform_absensi_digital/pages/main_guru_page.dart';
 import 'package:platform_absensi_digital/pages/login_page.dart';
 import 'package:platform_absensi_digital/services/api_service.dart';
+import 'package:platform_absensi_digital/services/firebase_messaging_service.dart';
+import 'package:platform_absensi_digital/widgets/custom_popup.dart';
 
 class LoginGuruPage extends StatefulWidget {
   const LoginGuruPage({super.key});
@@ -108,9 +110,10 @@ class _LoginGuruPageState extends State<LoginGuruPage> {
                             String namaLengkap = userData['username'] ?? userData['nama'] ?? "Pengajar";
                             String nip = userData['nip'] ?? "NIP Belum Diatur";
                             int idUser = userData['id'] ?? 0;
+                            String emailUser = userData['email'] ?? "Email tidak tersedia";
 
                             Provider.of<UserProvider>(context, listen: false)
-                                .setUserData(idUser, namaLengkap, nip, userData['role']);
+                                .setUserData(idUser, namaLengkap, nip, userData['role'], emailStr: emailUser);
 
                             // 2. AMBIL DATA DASHBOARD KHUSUS GURU
                             var dashResponse = await ApiService.getDashboardGuru(idUser);
@@ -124,13 +127,17 @@ class _LoginGuruPageState extends State<LoginGuruPage> {
                                 dashData?['jadwalMengajar'] ?? []
                               );
                             }
+                            // Update FCM Token ke Server
+                            if (response['token'] != null) {
+                              FirebaseMessagingService.updateFCMTokenToServer(idUser, response['token']);
+                            }
 
                             Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const MainGuruPage()));
                           } else {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Anda bukan pengajar!")));
+                            CustomPopup.show(context, message: "Anda bukan pengajar!", type: PopupType.warning);
                           }
                         } else {
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(response['message'] ?? "Login gagal")));
+                          CustomPopup.show(context, message: response['message'] ?? "Login gagal", type: PopupType.error);
                         }
                       },
                       child: const Text("Masuk", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),

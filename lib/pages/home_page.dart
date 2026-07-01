@@ -6,6 +6,7 @@ import 'package:platform_absensi_digital/pages/absensi_page.dart';
 import 'package:platform_absensi_digital/pages/profil_page.dart';
 import 'package:platform_absensi_digital/pages/izin_page.dart';
 import 'package:platform_absensi_digital/pages/notifikasi_page.dart';
+import 'package:platform_absensi_digital/widgets/custom_popup.dart';
 import 'package:intl/intl.dart';
 
 class HomePage extends StatefulWidget {
@@ -27,16 +28,12 @@ class _HomePageState extends State<HomePage> {
           response['data']['riwayatAbsensi'],
           response['data']['riwayatPerizinan'],
           jadwal: response['data']['jadwalAktif'] ?? [],
+          geofence: response['data']['geofence'],
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Gagal memperbarui data: ${e.toString()}'),
-          backgroundColor: const Color(0xFF006D5B),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ));
+        CustomPopup.show(context, message: 'Gagal memperbarui data: ${e.toString()}', type: PopupType.error);
       }
     }
   }
@@ -55,17 +52,9 @@ class _HomePageState extends State<HomePage> {
     final firstName = userProvider.namaLengkap.split(' ').first;
     final tanggal = DateFormat('EEEE, d MMMM', 'id_ID').format(DateTime.now());
 
-    // Hitung langsung dari list lokal (sama seperti izin_page.dart)
-    final List<dynamic> riwayat = userProvider.riwayatAbsensi;
-    final int hadirCount =
-        riwayat.where((a) => a['status'] == 'Hadir').length;
-    final int telatCount = riwayat
-        .where((a) => a['status'] == 'Telat' || a['status'] == 'Terlambat')
-        .length;
-    final int totalCount = riwayat.length;
-    final int persenHadir = totalCount > 0
-        ? (((hadirCount + telatCount) / totalCount) * 100).round()
-        : 0;
+    // Hitung dari dashboard data (bulan ini)
+    final int hadirCount = userProvider.hadirBulanIni;
+    final int persenHadir = userProvider.persentaseKehadiran;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
@@ -307,7 +296,7 @@ class _HomePageState extends State<HomePage> {
                                         ),
                                         const SizedBox(height: 10),
                                         const Text(
-                                          "Absen\nSekarang",
+                                          "Presensi\nSekarang",
                                           style: TextStyle(
                                             color: Colors.white,
                                             fontSize: 26,
@@ -485,18 +474,22 @@ class _HomePageState extends State<HomePage> {
         children: [
           Icon(icon, color: iconColor, size: 22),
           const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                value,
-                style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              Text(
-                label,
-                style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 10, fontWeight: FontWeight.w500),
-              ),
-            ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  value,
+                  style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  label,
+                  style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 10, fontWeight: FontWeight.w500),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
         ],
       ),

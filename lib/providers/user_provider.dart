@@ -5,6 +5,7 @@ class UserProvider with ChangeNotifier {
   String _namaLengkap = "Memuat...";
   String _kelasAtauNip = "Memuat...";
   String _role = "";
+  String _email = "";
   
   // Variabel baru untuk statistik dan riwayat
   int _hadirBulanIni = 0;
@@ -15,25 +16,31 @@ class UserProvider with ChangeNotifier {
 
   // [DIUBAH] Variabel geofencing sekarang menyimpan poligon, bukan radius.
   List<Map<String, double>>? _schoolPolygon;
+  bool _isGeofenceActive = true;
+
   // Getters
   int get userId => _userId;
   String get namaLengkap => _namaLengkap;
   String get kelasAtauNip => _kelasAtauNip;
   String get role => _role;
+  String get email => _email;
   int get hadirBulanIni => _hadirBulanIni;
   int get persentaseKehadiran => _persentaseKehadiran;
   List<dynamic> get riwayatAbsensi => _riwayatAbsensi;
   List<dynamic> get riwayatPerizinan => _riwayatPerizinan;
   List<dynamic> get jadwalAktif => _jadwalAktif;
 
-  // [BARU] Getter untuk data poligon.
+  // [BARU] Getter untuk data poligon dan status aktif geofence.
   List<Map<String, double>>? get schoolPolygon => _schoolPolygon;
+  bool get isGeofenceActive => _isGeofenceActive;
+
   // Menyimpan data Akun saat login
-  void setUserData(int id, String nama, String detail, String roleUser) {
+  void setUserData(int id, String nama, String detail, String roleUser, {String emailStr = ""}) {
     _userId = id;
     _namaLengkap = nama;
     _kelasAtauNip = detail;
     _role = roleUser;
+    _email = emailStr;
     notifyListeners();
   }
 
@@ -43,14 +50,37 @@ class UserProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  void setGeofenceActive(bool active) {
+    _isGeofenceActive = active;
+    notifyListeners();
+  }
+
   // Menyimpan data Statistik & Riwayat dari API Dashboard
-  void setDashboardData(int hadir, int persentase, List<dynamic> absensi, List<dynamic> perizinan, {List<dynamic> jadwal = const []}) {
+  void setDashboardData(int hadir, int persentase, List<dynamic> absensi, List<dynamic> perizinan, {List<dynamic> jadwal = const [], Map<String, dynamic>? geofence}) {
     _hadirBulanIni = hadir;
     _persentaseKehadiran = persentase;
     _riwayatAbsensi = absensi;
     _riwayatPerizinan = perizinan;
     if (jadwal.isNotEmpty) {
       _jadwalAktif = jadwal;
+    }
+    if (geofence != null) {
+      _isGeofenceActive = geofence['isActive'] ?? true;
+      if (geofence['polygon'] != null) {
+        try {
+          List<Map<String, double>> polygon = (geofence['polygon'] as List)
+            .map((point) => {
+                  'latitude': (point[1] as num).toDouble(),
+                  'longitude': (point[0] as num).toDouble(),
+                })
+            .toList();
+          _schoolPolygon = polygon;
+        } catch (e) {
+          debugPrint("Error parsing polygon geofence in setDashboardData: $e");
+        }
+      } else {
+        _schoolPolygon = null;
+      }
     }
     notifyListeners(); // Memicu UI untuk reload otomatis dengan data asli
   }
@@ -60,6 +90,7 @@ class UserProvider with ChangeNotifier {
     _namaLengkap = "";
     _kelasAtauNip = "";
     _role = "";
+    _email = "";
     _hadirBulanIni = 0;
     _persentaseKehadiran = 0;
     _riwayatAbsensi = [];
@@ -68,6 +99,7 @@ class UserProvider with ChangeNotifier {
     
     // [DIUBAH] Bersihkan data poligon saat logout.
     _schoolPolygon = null;
+    _isGeofenceActive = true;
     notifyListeners();
   }
 

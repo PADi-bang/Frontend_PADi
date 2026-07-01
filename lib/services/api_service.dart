@@ -16,9 +16,25 @@ class SessionExpiredException implements Exception {
 class ApiService {
   static final StorageService _storageService = StorageService();
 
-  static Future<Map<String, String>> _authHeaders() async {
+  static Future<Map<String, String>> _authHeaders({bool isJson = false}) async {
     final token = await _storageService.getToken();
-    final headers = <String, String>{'Content-Type': 'application/json'};
+    final headers = <String, String>{
+      'ngrok-skip-browser-warning': 'true',
+    };
+    if (isJson) {
+      headers['Content-Type'] = 'application/json';
+    }
+    if (token != null) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+    return headers;
+  }
+
+  static Future<Map<String, String>> _authHeadersMultipart() async {
+    final token = await _storageService.getToken();
+    final headers = <String, String>{
+      'ngrok-skip-browser-warning': 'true',
+    }; // Tanpa 'Content-Type' default
     if (token != null) {
       headers['Authorization'] = 'Bearer $token';
     }
@@ -39,6 +55,17 @@ class ApiService {
   }
 
   static String get baseUrl {
+    // TODO: GANTI string di bawah ini dengan URL ngrok Anda.
+    // Contoh: 'https://abcd-12-34-56.ngrok-free.app'
+    // Pastikan tidak ada slash '/' di akhir URL.
+    String ngrokUrl = 'https://float-passing-washroom.ngrok-free.dev';
+
+    // Jika ngrokUrl tidak kosong, gunakan URL tersebut
+    if (ngrokUrl.isNotEmpty) {
+      return '$ngrokUrl/api';
+    }
+
+    // Konfigurasi bawaan (localhost)
     String host;
     if (!kIsWeb && Platform.isAndroid) {
       host = 'http://10.0.2.2:3000';
@@ -57,7 +84,10 @@ class ApiService {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/auth/login'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        },
         body: json.encode({'username': identifier, 'password': password}),
       );
 
@@ -72,6 +102,7 @@ class ApiService {
           name: data['username'] ?? data['nama'] ?? '',
           detail: data['kelas'] ?? data['nip'] ?? '',
           role: data['role'] ?? '',
+          email: data['email'] ?? '',
         );
       }
 
@@ -88,7 +119,6 @@ class ApiService {
   // --- FUNGSI ABSENSI ---
   static Future<Map<String, dynamic>> kirimAbsensiMasuk({
     required int userId, // [DIUBAH] Menggunakan userId
-    required List<double> faceEmbedding,
     required double latitude,
     required double longitude,
     required String
@@ -100,13 +130,10 @@ class ApiService {
         'POST',
         Uri.parse('$baseUrl/absensi/masuk'),
       );
-      request.headers.addAll(await _authHeaders());
+      request.headers.addAll(await _authHeadersMultipart());
 
       // Tambahkan field data
       request.fields['userId'] = userId.toString();
-      request.fields['faceEmbedding'] = jsonEncode(
-        faceEmbedding,
-      ); // Encode list menjadi string JSON
       request.fields['latitude'] = latitude.toString();
       request.fields['longitude'] = longitude.toString();
 
@@ -117,6 +144,9 @@ class ApiService {
 
       var streamedResponse = await request.send();
       var response = await http.Response.fromStream(streamedResponse);
+      
+      debugPrint("API Absensi Masuk Status: ${response.statusCode}");
+      debugPrint("API Absensi Masuk Body: ${response.body}");
 
       // [PERBAIKAN] Cek status code SEBELUM mencoba decode JSON
       if (response.statusCode >= 200 && response.statusCode < 300) {
@@ -126,17 +156,21 @@ class ApiService {
           'message': responseBody['message'] ?? 'Absensi berhasil.',
         };
       } else {
-        await _handleUnauthorizedResponse(response);
-        final errorBody = jsonDecode(response.body);
-        return {
-          'success': false,
-          'message':
-              errorBody['message'] ?? 'Gagal: Terjadi kesalahan di server.',
-        };
+        try {
+          final errorBody = jsonDecode(response.body);
+          return {
+            'success': false,
+            'message': errorBody['message'] ?? 'Gagal: Terjadi kesalahan di server.',
+          };
+        } catch (_) {
+          return {
+            'success': false,
+            'message': 'Gagal merespons server (Status: ${response.statusCode}).',
+          };
+        }
       }
     } catch (e, stacktrace) {
       debugPrint('Error di ApiService (kirimAbsensiMasuk): $e\n$stacktrace');
-      debugPrint('Error di ApiService (kirimAbsensiMasuk): $e');
       return {'success': false, 'message': 'Tidak dapat terhubung ke server.'};
     }
   }
@@ -144,21 +178,18 @@ class ApiService {
   // [BARU] Fungsi untuk mengirim absensi pulang
   static Future<Map<String, dynamic>> kirimAbsensiPulang({
     required int userId,
-    required List<double> faceEmbedding,
     required double latitude,
     required double longitude,
-    required String fotoPulangPath, // [DIUBAH] Menggunakan path file
+    required String fotoPulangPath,
   }) async {
     try {
-      // [DIUBAH] Menggunakan MultipartRequest
       var request = http.MultipartRequest(
         'POST',
         Uri.parse('$baseUrl/absensi/pulang'),
       );
-      request.headers.addAll(await _authHeaders());
+      request.headers.addAll(await _authHeadersMultipart());
 
       request.fields['userId'] = userId.toString();
-      request.fields['faceEmbedding'] = jsonEncode(faceEmbedding);
       request.fields['latitude'] = latitude.toString();
       request.fields['longitude'] = longitude.toString();
 
@@ -168,6 +199,9 @@ class ApiService {
 
       var streamedResponse = await request.send();
       var response = await http.Response.fromStream(streamedResponse);
+      
+      debugPrint("API Absensi Pulang Status: ${response.statusCode}");
+      debugPrint("API Absensi Pulang Body: ${response.body}");
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final responseBody = jsonDecode(response.body);
@@ -177,13 +211,18 @@ class ApiService {
           'message': responseBody['message'] ?? 'Absensi pulang berhasil.',
         };
       } else {
-        await _handleUnauthorizedResponse(response);
-        final errorBody = jsonDecode(response.body);
-        return {
-          'success': false,
-          'message':
-              errorBody['message'] ?? 'Gagal: Terjadi kesalahan di server.',
-        };
+        try {
+          final errorBody = jsonDecode(response.body);
+          return {
+            'success': false,
+            'message': errorBody['message'] ?? 'Gagal: Terjadi kesalahan di server.',
+          };
+        } catch (_) {
+          return {
+            'success': false,
+            'message': 'Gagal merespons server (Status: ${response.statusCode}).',
+          };
+        }
       }
     } catch (e, stacktrace) {
       debugPrint('Error di ApiService (kirimAbsensiPulang): $e\n$stacktrace');
@@ -292,6 +331,23 @@ class ApiService {
     }
   }
 
+  // 2.b. Fungsi Guru Mengambil Daftar Izin Riwayat
+  static Future<List<dynamic>> getIzinRiwayat() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/perizinan/riwayat'),
+        headers: await _authHeaders(),
+      );
+      if (response.statusCode == 200) {
+        return json.decode(response.body)['data'];
+      }
+      await _handleUnauthorizedResponse(response);
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
   // 3. Fungsi Guru Menyetujui/Menolak
   static Future<Map<String, dynamic>> updateStatusIzin(
     int izinId,
@@ -301,7 +357,7 @@ class ApiService {
     try {
       final response = await http.put(
         Uri.parse('$baseUrl/perizinan/$izinId/status'),
-        headers: await _authHeaders(),
+        headers: await _authHeaders(isJson: true),
         body: json.encode({'statusUpdate': status, 'guruUserId': guruUserId}),
       );
       await _handleUnauthorizedResponse(response);
@@ -316,7 +372,10 @@ class ApiService {
   // 1. Mengambil semua notifikasi siswa
   static Future<List<dynamic>> getNotifications(int userId) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/notifikasi/$userId'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/notifikasi/$userId'),
+        headers: await _authHeaders(),
+      );
       if (response.statusCode == 200) {
         final body = json.decode(response.body);
         if (body['status'] == 'success') {
@@ -335,6 +394,7 @@ class ApiService {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/notifikasi/$userId/unread'),
+        headers: await _authHeaders(),
       );
       if (response.statusCode == 200) {
         final body = json.decode(response.body);
@@ -354,7 +414,7 @@ class ApiService {
     try {
       final response = await http.put(
         Uri.parse('$baseUrl/notifikasi/$id/read'),
-        headers: {'Content-Type': 'application/json'},
+        headers: await _authHeaders(isJson: true),
       );
       return json.decode(response.body);
     } catch (e) {
@@ -370,7 +430,7 @@ class ApiService {
     try {
       final response = await http.put(
         Uri.parse('$baseUrl/notifikasi/$userId/read-all'),
-        headers: {'Content-Type': 'application/json'},
+        headers: await _authHeaders(isJson: true),
       );
       return json.decode(response.body);
     } catch (e) {

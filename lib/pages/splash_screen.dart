@@ -5,6 +5,7 @@ import 'package:platform_absensi_digital/pages/main_page.dart';
 import 'package:platform_absensi_digital/pages/main_guru_page.dart';
 import 'package:platform_absensi_digital/services/storage_service.dart';
 import 'package:platform_absensi_digital/providers/user_provider.dart';
+import 'package:platform_absensi_digital/services/firebase_messaging_service.dart';
 import 'package:provider/provider.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -89,6 +90,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     final role = await storage.getUserRole();
     final name = await storage.getUserName();
     final detail = await storage.getUserDetail();
+    final email = await storage.getUserEmail();
 
     if (token != null && token.isNotEmpty) {
       final bool isTokenExpired = JwtDecoder.isExpired(token);
@@ -99,7 +101,10 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
 
       if (userId != null && userId > 0) {
         final userProvider = context.read<UserProvider>();
-        userProvider.setUserData(userId, name ?? 'Pengguna', detail ?? '', role ?? '');
+        userProvider.setUserData(userId, name ?? 'Pengguna', detail ?? '', role ?? '', emailStr: email ?? '');
+
+        // Update FCM Token ke Server saat restore sesi
+        FirebaseMessagingService.updateFCMTokenToServer(userId, token);
 
         if (role != null && role.toLowerCase() == 'guru') {
           return const MainGuruPage();
