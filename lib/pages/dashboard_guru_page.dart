@@ -5,6 +5,7 @@ import 'package:platform_absensi_digital/services/api_service.dart';
 import 'package:platform_absensi_digital/pages/notifikasi_page.dart';
 import 'package:platform_absensi_digital/pages/profil_guru_page.dart';
 import 'package:intl/intl.dart';
+import 'package:platform_absensi_digital/widgets/page_transitions.dart';
 
 class DashboardGuruPage extends StatefulWidget {
   const DashboardGuruPage({super.key});
@@ -22,6 +23,11 @@ class _DashboardGuruPageState extends State<DashboardGuruPage> {
   @override
   void initState() {
     super.initState();
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    _jumlahIzinPending = userProvider.jumlahIzinPending;
+    _persentaseKehadiran = userProvider.persentaseKehadiranKelas;
+    _rekapAbsensi = userProvider.rekapAbsensiKelas;
+    _isLoading = _rekapAbsensi.isEmpty;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadDashboardData();
     });
@@ -112,7 +118,7 @@ class _DashboardGuruPageState extends State<DashboardGuruPage> {
                                   width: 36,
                                   height: 36,
                                   decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.18),
+                                    color: Colors.white.withValues(alpha: 0.18),
                                     borderRadius: BorderRadius.circular(10),
                                   ),
                                   child: const Icon(Icons.school_rounded, color: Colors.white, size: 20),
@@ -133,12 +139,12 @@ class _DashboardGuruPageState extends State<DashboardGuruPage> {
                               children: [
                                 _buildHeaderIconButton(
                                   Icons.notifications_none_rounded,
-                                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NotifikasiPage())),
+                                  onTap: () => Navigator.push(context, PageTransition.slideRight(const NotifikasiPage())),
                                 ),
                                 const SizedBox(width: 10),
                                 _buildHeaderIconButton(
                                   Icons.person_outline_rounded,
-                                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfilGuruPage())),
+                                  onTap: () => Navigator.push(context, PageTransition.slideRight(const ProfilGuruPage())),
                                 ),
                               ],
                             ),
@@ -148,12 +154,12 @@ class _DashboardGuruPageState extends State<DashboardGuruPage> {
                         // Greeting
                         Text(
                           tanggalHariIni,
-                          style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 13, fontWeight: FontWeight.w500),
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 13, fontWeight: FontWeight.w500),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           "${_getGreeting()},",
-                          style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 15),
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 15),
                         ),
                         Text(
                           namaLengkap,
@@ -246,7 +252,7 @@ class _DashboardGuruPageState extends State<DashboardGuruPage> {
       child: Container(
         width: 42, height: 42,
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.15),
+          color: Colors.white.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(14),
         ),
         child: Icon(icon, color: Colors.white, size: 22),
@@ -263,9 +269,9 @@ class _DashboardGuruPageState extends State<DashboardGuruPage> {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.12),
+        color: Colors.white.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
       ),
       child: Column(
         children: [
@@ -284,7 +290,7 @@ class _DashboardGuruPageState extends State<DashboardGuruPage> {
             label,
             style: TextStyle(
               fontSize: 11,
-              color: Colors.white.withOpacity(0.7),
+              color: Colors.white.withValues(alpha: 0.7),
               fontWeight: FontWeight.w500,
             ),
             textAlign: TextAlign.center,
@@ -313,7 +319,7 @@ class _DashboardGuruPageState extends State<DashboardGuruPage> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(22),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 16, offset: const Offset(0, 4)),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 16, offset: const Offset(0, 4)),
         ],
       ),
       child: Column(
@@ -363,7 +369,7 @@ class _DashboardGuruPageState extends State<DashboardGuruPage> {
         Container(
           width: 44, height: 44,
           decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
+            color: color.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(14),
           ),
           child: Center(
@@ -388,7 +394,7 @@ class _DashboardGuruPageState extends State<DashboardGuruPage> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(22),
           boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 12, offset: const Offset(0, 4)),
+            BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 12, offset: const Offset(0, 4)),
           ],
         ),
         child: Column(
@@ -406,7 +412,7 @@ class _DashboardGuruPageState extends State<DashboardGuruPage> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(22),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 16, offset: const Offset(0, 4)),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 16, offset: const Offset(0, 4)),
         ],
       ),
       child: ClipRRect(
@@ -449,7 +455,7 @@ class _DashboardGuruPageState extends State<DashboardGuruPage> {
                 contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
                 leading: CircleAvatar(
                   radius: 22,
-                  backgroundColor: statusColor.withOpacity(0.1),
+                  backgroundColor: statusColor.withValues(alpha: 0.1),
                   child: Text(
                     nama.isNotEmpty ? nama[0].toUpperCase() : "?",
                     style: TextStyle(
@@ -470,7 +476,7 @@ class _DashboardGuruPageState extends State<DashboardGuruPage> {
                 trailing: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.1),
+                    color: statusColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Row(

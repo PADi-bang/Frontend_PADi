@@ -4,6 +4,7 @@ import 'package:platform_absensi_digital/providers/user_provider.dart';
 import 'package:platform_absensi_digital/pages/login_page.dart';
 import 'package:platform_absensi_digital/pages/pusat_bantuan_page.dart';
 import 'package:platform_absensi_digital/services/api_service.dart';
+import 'package:platform_absensi_digital/widgets/page_transitions.dart';
 
 class ProfilPage extends StatelessWidget {
   const ProfilPage({super.key});
@@ -52,7 +53,7 @@ class ProfilPage extends StatelessWidget {
                           Container(
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.15),
+                              color: Colors.white.withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(14),
                             ),
                             child: const Icon(Icons.person_rounded,
@@ -103,7 +104,7 @@ class ProfilPage extends StatelessWidget {
                         border: Border.all(color: Colors.white, width: 4),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFF006D5B).withOpacity(0.35),
+                            color: const Color(0xFF006D5B).withValues(alpha: 0.35),
                             blurRadius: 24,
                             offset: const Offset(0, 10),
                           )
@@ -147,7 +148,7 @@ class ProfilPage extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF006D5B).withOpacity(0.08),
+                    color: const Color(0xFF006D5B).withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Row(
@@ -215,7 +216,7 @@ class ProfilPage extends StatelessWidget {
                       borderRadius: BorderRadius.circular(24),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
+                          color: Colors.black.withValues(alpha: 0.05),
                           blurRadius: 20,
                           offset: const Offset(0, 6),
                         )
@@ -239,8 +240,7 @@ class ProfilPage extends StatelessWidget {
                           showArrow: true,
                           onTap: () => Navigator.push(
                             context,
-                            MaterialPageRoute(
-                                builder: (_) => const PusatBantuanPage()),
+                            PageTransition.slideRight(const PusatBantuanPage()),
                           ),
                         ),
                       ],
@@ -267,7 +267,7 @@ class ProfilPage extends StatelessWidget {
                       borderRadius: BorderRadius.circular(24),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
+                          color: Colors.black.withValues(alpha: 0.05),
                           blurRadius: 20,
                           offset: const Offset(0, 6),
                         )
@@ -278,7 +278,7 @@ class ProfilPage extends StatelessWidget {
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF006D5B).withOpacity(0.1),
+                            color: const Color(0xFF006D5B).withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(14),
                           ),
                           child: const Icon(Icons.school_rounded,
@@ -382,12 +382,13 @@ class ProfilPage extends StatelessWidget {
                         );
 
                         if (konfirm == true) {
+                          if (!context.mounted) return;
                           context.read<UserProvider>().clearData();
                           await ApiService.clearLocalSession();
+                          if (!context.mounted) return;
                           Navigator.pushAndRemoveUntil(
                             context,
-                            MaterialPageRoute(
-                                builder: (context) => const LoginPage()),
+                            PageTransition.scaleFade(const LoginPage()),
                             (Route<dynamic> route) => false,
                           );
                         }

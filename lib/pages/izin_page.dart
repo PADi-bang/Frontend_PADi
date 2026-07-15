@@ -16,6 +16,7 @@ class IzinPage extends StatefulWidget {
 class _IzinPageState extends State<IzinPage>
     with SingleTickerProviderStateMixin {
   late bool isRiwayat;
+  late PageController _pageController;
 
   // --- Variabel Form ---
   DateTime? startDate;
@@ -37,15 +38,56 @@ class _IzinPageState extends State<IzinPage>
     'Terlambat'
   ];
 
+  List<Map<String, dynamic>> _combinedRiwayatCached = [];
+  int _lastAbsensiLength = -1;
+  int _lastPerizinanLength = -1;
+
+  void _updateCombinedRiwayat(UserProvider userProvider) {
+    final absensi = userProvider.riwayatAbsensi;
+    final perizinan = userProvider.riwayatPerizinan;
+    if (absensi.length == _lastAbsensiLength && perizinan.length == _lastPerizinanLength) {
+      return;
+    }
+    _lastAbsensiLength = absensi.length;
+    _lastPerizinanLength = perizinan.length;
+
+    List<Map<String, dynamic>> temp = [];
+    for (var a in absensi) {
+      temp.add({
+        'tanggal': a['tanggal'],
+        'jamMasuk': a['jamMasuk'],
+        'status': a['status'],
+      });
+    }
+    for (var p in perizinan) {
+      temp.add({
+        'tanggal': p['createdAt'],
+        'jamMasuk': null,
+        'status': p['status'] == 'Pending'
+            ? 'Menunggu'
+            : (p['status'] == 'Disetujui'
+                ? 'Izin (${p['jenisIzin']})'
+                : 'Ditolak'),
+      });
+    }
+    try {
+      temp.sort((a, b) =>
+          DateTime.parse(b['tanggal']).compareTo(DateTime.parse(a['tanggal'])));
+    } catch (_) {}
+    _combinedRiwayatCached = temp;
+  }
+
   @override
   void initState() {
     super.initState();
     isRiwayat = widget.openRiwayatTab;
+    _pageController = PageController(initialPage: isRiwayat ? 0 : 1);
   }
 
   @override
   void dispose() {
     alasanController.dispose();
+    _pageController.dispose();
     super.dispose();
   }
 
@@ -86,6 +128,7 @@ class _IzinPageState extends State<IzinPage>
     setState(() => isSubmitting = false);
 
     if (result['status'] == 'success') {
+      if (!mounted) return;
       CustomPopup.show(
         context,
         message: 'Pengajuan izin berhasil dikirim!',
@@ -110,7 +153,11 @@ class _IzinPageState extends State<IzinPage>
         selectedFileName = null;
         isRiwayat = true;
       });
+      _pageController.animateToPage(0,
+          duration: const Duration(milliseconds: 450),
+          curve: Curves.easeInOutCubic);
     } else {
+      if (!mounted) return;
       CustomPopup.show(
         context,
         message: result['message'] ?? 'Gagal mengirim izin',
@@ -167,8 +214,11 @@ class _IzinPageState extends State<IzinPage>
     );
     if (picked != null) {
       setState(() {
-        if (isStart) startDate = picked;
-        else endDate = picked;
+        if (isStart) {
+          startDate = picked;
+        } else {
+          endDate = picked;
+        }
       });
     }
   }
@@ -236,7 +286,7 @@ class _IzinPageState extends State<IzinPage>
                             child: Container(
                               padding: const EdgeInsets.all(8),
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.15),
+                                color: Colors.white.withValues(alpha: 0.15),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: const Icon(Icons.arrow_back_ios_new_rounded,
@@ -248,7 +298,7 @@ class _IzinPageState extends State<IzinPage>
                         Container(
                           padding: const EdgeInsets.all(10),
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.15),
+                            color: Colors.white.withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(14),
                           ),
                           child: Icon(
@@ -287,66 +337,86 @@ class _IzinPageState extends State<IzinPage>
 
                     // Tab Switcher
                     Container(
-                      padding: const EdgeInsets.all(4),
+                      height: 50,
                       decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.15),
+                        color: Colors.black.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(16),
                       ),
-                      child: Row(
+                      child: Stack(
                         children: [
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: () => setState(() => isRiwayat = true),
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 200),
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 11),
+                          AnimatedAlign(
+                            alignment: isRiwayat ? Alignment.centerLeft : Alignment.centerRight,
+                            duration: const Duration(milliseconds: 250),
+                            curve: Curves.easeInOutCubic,
+                            child: FractionallySizedBox(
+                              widthFactor: 0.5,
+                              child: Container(
+                                margin: const EdgeInsets.all(4),
                                 decoration: BoxDecoration(
-                                  color: isRiwayat
-                                      ? Colors.white
-                                      : Colors.transparent,
+                                  color: Colors.white,
                                   borderRadius: BorderRadius.circular(12),
-                                ),
-                                alignment: Alignment.center,
-                                child: Text(
-                                  "Riwayat",
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: isRiwayat
-                                        ? const Color(0xFF006D5B)
-                                        : Colors.white70,
-                                    fontSize: 14,
-                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.1),
+                                      blurRadius: 4,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
                           ),
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: () => setState(() => isRiwayat = false),
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 200),
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 11),
-                                decoration: BoxDecoration(
-                                  color: !isRiwayat
-                                      ? Colors.white
-                                      : Colors.transparent,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                alignment: Alignment.center,
-                                child: Text(
-                                  "Perizinan",
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: !isRiwayat
-                                        ? const Color(0xFF006D5B)
-                                        : Colors.white70,
-                                    fontSize: 14,
+                          Row(
+                            children: [
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () {
+                                    setState(() => isRiwayat = true);
+                                    _pageController.animateToPage(0,
+                                        duration: const Duration(milliseconds: 450),
+                                        curve: Curves.easeInOutCubic);
+                                  },
+                                  behavior: HitTestBehavior.opaque,
+                                  child: Center(
+                                    child: AnimatedDefaultTextStyle(
+                                      duration: const Duration(milliseconds: 250),
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: isRiwayat
+                                            ? const Color(0xFF006D5B)
+                                            : Colors.white70,
+                                        fontSize: 14,
+                                      ),
+                                      child: const Text("Riwayat"),
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () {
+                                    setState(() => isRiwayat = false);
+                                    _pageController.animateToPage(1,
+                                        duration: const Duration(milliseconds: 450),
+                                        curve: Curves.easeInOutCubic);
+                                  },
+                                  behavior: HitTestBehavior.opaque,
+                                  child: Center(
+                                    child: AnimatedDefaultTextStyle(
+                                      duration: const Duration(milliseconds: 250),
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: !isRiwayat
+                                            ? const Color(0xFF006D5B)
+                                            : Colors.white70,
+                                        fontSize: 14,
+                                      ),
+                                      child: const Text("Perizinan"),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -359,16 +429,35 @@ class _IzinPageState extends State<IzinPage>
 
           // ===== CONTENT =====
           Expanded(
-            child: RefreshIndicator(
-              onRefresh: _refreshData,
-              color: const Color(0xFF006D5B),
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 110),
-                child: isRiwayat
-                    ? _buildRiwayatContent(context)
-                    : _buildIzinContent(context),
-              ),
+            child: PageView(
+              controller: _pageController,
+              onPageChanged: (index) {
+                setState(() {
+                  isRiwayat = index == 0;
+                });
+              },
+              children: [
+                // Page 0: Riwayat
+                RefreshIndicator(
+                  onRefresh: _refreshData,
+                  color: const Color(0xFF006D5B),
+                  child: SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 110),
+                    child: _buildRiwayatContent(context),
+                  ),
+                ),
+                // Page 1: Perizinan
+                RefreshIndicator(
+                  onRefresh: _refreshData,
+                  color: const Color(0xFF006D5B),
+                  child: SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 110),
+                    child: _buildIzinContent(context),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -394,7 +483,7 @@ class _IzinPageState extends State<IzinPage>
             borderRadius: BorderRadius.circular(24),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.05),
+                color: Colors.black.withValues(alpha: 0.05),
                 blurRadius: 20,
                 offset: const Offset(0, 6),
               )
@@ -537,7 +626,7 @@ class _IzinPageState extends State<IzinPage>
                     borderRadius: BorderRadius.circular(18),
                     border: Border.all(
                       color: selectedFileName != null
-                          ? const Color(0xFF006D5B).withOpacity(0.4)
+                          ? const Color(0xFF006D5B).withValues(alpha: 0.4)
                           : Colors.grey.shade200,
                       width: 1.5,
                     ),
@@ -548,8 +637,8 @@ class _IzinPageState extends State<IzinPage>
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
                           color: selectedFileName != null
-                              ? const Color(0xFF006D5B).withOpacity(0.1)
-                              : Colors.grey.withOpacity(0.08),
+                              ? const Color(0xFF006D5B).withValues(alpha: 0.1)
+                              : Colors.grey.withValues(alpha: 0.08),
                           shape: BoxShape.circle,
                         ),
                         child: Icon(
@@ -683,32 +772,10 @@ class _IzinPageState extends State<IzinPage>
     final userProvider = context.watch<UserProvider>();
     final List<dynamic> absensi = userProvider.riwayatAbsensi;
     final List<dynamic> perizinan = userProvider.riwayatPerizinan;
-
-    List<Map<String, dynamic>> combinedRiwayat = [];
-    for (var a in absensi) {
-      combinedRiwayat.add({
-        'tanggal': a['tanggal'],
-        'jamMasuk': a['jamMasuk'],
-        'status': a['status'],
-      });
-    }
-    for (var p in perizinan) {
-      combinedRiwayat.add({
-        'tanggal': p['createdAt'],
-        'jamMasuk': null,
-        'status': p['status'] == 'Pending'
-            ? 'Menunggu'
-            : (p['status'] == 'Disetujui'
-                ? 'Izin (${p['jenisIzin']})'
-                : 'Ditolak'),
-      });
-    }
-
-    combinedRiwayat.sort((a, b) =>
-        DateTime.parse(b['tanggal']).compareTo(DateTime.parse(a['tanggal'])));
+    _updateCombinedRiwayat(userProvider);
 
     final List<Map<String, dynamic>> riwayatTerfilter =
-        combinedRiwayat.where((item) {
+        _combinedRiwayatCached.where((item) {
       if (activeFilters.contains('Semua')) return true;
       String statusDb =
           item['status'] == 'Telat' ? 'Terlambat' : item['status'];
@@ -804,7 +871,7 @@ class _IzinPageState extends State<IzinPage>
                           ? [
                               BoxShadow(
                                 color: const Color(0xFF006D5B)
-                                    .withOpacity(0.3),
+                                    .withValues(alpha: 0.3),
                                 blurRadius: 8,
                                 offset: const Offset(0, 3),
                               )
@@ -900,7 +967,7 @@ class _IzinPageState extends State<IzinPage>
           ),
           const SizedBox(height: 4),
           Text(label,
-              style: TextStyle(color: color.withOpacity(0.7), fontSize: 12)),
+              style: TextStyle(color: color.withValues(alpha: 0.7), fontSize: 12)),
         ],
       ),
     );
@@ -930,12 +997,12 @@ class _IzinPageState extends State<IzinPage>
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           color: hasPicked
-              ? const Color(0xFF006D5B).withOpacity(0.06)
+              ? const Color(0xFF006D5B).withValues(alpha: 0.06)
               : const Color(0xFFF5F7FA),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
             color: hasPicked
-                ? const Color(0xFF006D5B).withOpacity(0.3)
+                ? const Color(0xFF006D5B).withValues(alpha: 0.3)
                 : Colors.grey.shade200,
           ),
         ),
@@ -953,14 +1020,17 @@ class _IzinPageState extends State<IzinPage>
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  _formatDate(date),
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                    color: hasPicked
-                        ? const Color(0xFF1E1E1E)
-                        : Colors.grey,
+                Expanded(
+                  child: Text(
+                    _formatDate(date),
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                      color: hasPicked
+                          ? const Color(0xFF1E1E1E)
+                          : Colors.grey,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 Icon(Icons.calendar_today_rounded,
@@ -993,7 +1063,7 @@ class _IzinPageState extends State<IzinPage>
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 16,
             offset: const Offset(0, 4),
           )
@@ -1054,7 +1124,7 @@ class _IzinPageState extends State<IzinPage>
         borderRadius: BorderRadius.circular(18),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 14,
             offset: const Offset(0, 4),
           )
